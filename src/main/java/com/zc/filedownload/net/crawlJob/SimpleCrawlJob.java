@@ -15,10 +15,7 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -53,8 +50,6 @@ public class SimpleCrawlJob extends AbstractJob {
      *  检验URL的正则表达式
      */
     private static final String URL_PATTERN = "(https?|ftp|file)://[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]";
-
-    private static final String[] SUFFIX = new String[]{".mp3"};
 
     public SimpleCrawlJob(int depth) {
         super();
@@ -92,57 +87,8 @@ public class SimpleCrawlJob extends AbstractJob {
             return;
         }
 
-        Document doc = result.getHtmlDoc();
-        String htmlText = doc.outerHtml();
-        List<String> urls = new ArrayList<>();
-        List<String> err_urls = new ArrayList<>();
+        result.getNextUrl();
 
-        while(true){
-            int index = htmlText.indexOf("'");
-            if(index == -1){
-                break;
-            }else{
-                htmlText = htmlText.substring(index+1);
-                index = htmlText.indexOf("'");
-                urls.add(htmlText.substring(0,index));
-                htmlText = htmlText.substring(index+1);
-            }
-        }
-
-        int index = url.indexOf("?") == -1 ? url.length() : url.indexOf("?");
-        url = url.substring(0,index);
-        if(url.charAt(url.length()-1) != '/') {
-            String[] strs = url.split("/");
-            url = url.substring(0, url.indexOf(strs[strs.length - 1]));
-        }
-
-        for (int i = 0;i < urls.size(); i++) {
-            String urlStr = urls.get(i);
-            if(!Pattern.matches(URL_PATTERN,urlStr)){
-                String newUrl = url + urlStr;
-                if(Pattern.matches(URL_PATTERN,newUrl)){
-                    urls.set(i,newUrl);
-                }else{
-                    err_urls.add(urlStr);
-                }
-            }
-        }
-
-        for (String s: err_urls) {
-            urls.remove(s);
-        }
-
-        List<String> file_urls = new ArrayList<>();
-
-        for (int i = 0;i < urls.size(); i++) {
-            String s = urls.get(i);
-            for (String suffix : SUFFIX) {
-                if(s.contains(suffix)){
-                    file_urls.add(s);
-                    urls.remove(i);
-                }
-            }
-        }
 
         Elements elements = result.getHtmlDoc().select("a[href]");
         for(Element element: elements) {
@@ -163,25 +109,73 @@ public class SimpleCrawlJob extends AbstractJob {
 
 
     private CrawlResult doParse(String html) {
+        CrawlResult crs = new CrawlResult();
+        String url = crawlMeta.getUrl();
         Document doc = Jsoup.parse(html);
+        crs.setUrl(url);
+        crs.setHtmlDoc(doc);
+        //页面所有单引号包裹的属性内容
+        List<String> urls = new ArrayList<>();
+        //不符合URL的正则表达书校验的内容
+        List<String> err_urls = new ArrayList<>();
 
-        Map<String, List<String>> map = new HashMap<>(crawlMeta.getSelectorRules().size());
-        for (String rule : crawlMeta.getSelectorRules()) {
-            List<String> list = new ArrayList<>();
-            for (Element element : doc.select(rule)) {
-                list.add(element.text());
+        //解析页面中所有单引号包裹的内容
+        while(true){
+            int index = html.indexOf("'");
+            if(index == -1){
+                break;
+            }else{
+                html = html.substring(index+1);
+                index = html.indexOf("'");
+                urls.add(html.substring(0,index));
+                html = html.substring(index+1);
             }
-
-            map.put(rule, list);
         }
 
+        //获取当前页面的路径，用于拼接相对路径
+        int index = url.indexOf("?") == -1 ? url.length() : url.indexOf("?");
+        url = url.substring(0,index);
+        if(url.charAt(url.length()-1) != '/') {
+            String[] strs = url.split("/");
+            url = url.substring(0, url.indexOf(strs[strs.length - 1]));
+        }
 
-        CrawlResult result = new CrawlResult();
-        result.setHtmlDoc(doc);
-        result.setUrl(crawlMeta.getUrl());
-        result.setResult(map);
-        result.setStatus(CrawlResult.SUCCESS);
-        return result;
+        //校验URL格式
+        for (int i = 0;i < urls.size(); i++) {
+            String urlStr = urls.get(i);
+            if(!Pattern.matches(URL_PATTERN,urlStr)){
+                String newUrl = url + urlStr;
+                if(Pattern.matches(URL_PATTERN,newUrl)){
+                    urls.set(i,newUrl);
+                }else{
+                    err_urls.add(urlStr);
+                }
+            }
+        }
+
+        //移除格式错误的URL
+        for (String s: err_urls) {
+            urls.remove(s);
+        }
+
+        //检查包含所需文件后缀的URL放入结果集
+        Set<String> rules = crawlMeta.getSelectorRules();
+        Map result = crs.getResult();
+        for (String rule : rules) {
+            List<String> fileUrl = new ArrayList<>();
+            for (int i = 0;i < urls.size(); i++) {
+                String s = urls.get(i);
+                if(s.contains(rule)){
+                    fileUrl.add(s);
+                    urls.remove(i);
+                }
+            }
+            result.put(rule,fileUrl);
+        }
+        Set<String> set = new HashSet<>(urls);
+        crs.setNextUrl(set);
+        crs.setStatus(CrawlResult.SUCCESS);
+        return crs;
     }
 
     public void setCrawlMeta(CrawlMeta crawlMeta) {
